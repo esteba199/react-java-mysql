@@ -1,0 +1,111 @@
+# Aqui definimos los contenedores(servicios) que vamos a tener
+services:
+  
+  # con esto decimos que docker compose va a entrar en la carpeta backend/
+  # buscara un dockerfile y hara un docker build
+  backend:
+
+    # Es equivalente a: docker build backend
+    build: backend
+
+    # con esto si el contenedor se cae, Docker lo levantara solo
+    restart: always
+
+    # esta usando un "secreto" para la contraseña de la base de datos, esto es mejor que ponerla directamente
+    secrets:
+      - db-password
+    
+    # dentro del contenedor backend:
+    environment:
+
+      # db es el nombre del servicio, no una IP, docker dns lo resuelve automáticamente
+      MYSQL_HOST: db
+
+    # el backend está en dos redes:
+    networks:
+
+      # habla con el frontend
+      - react-spring
+      # habla con la base de datos
+      - spring-mysql
+
+    # el backend NO arranca hasta que MySQL esté "sano" 
+    # esto evita errores típicos de “no puedo conectar”
+    depends_on:
+      db:
+        condition: service_healthy
+
+  # lo mismo que arria, solo que ahora en la carpeta db
+  db:
+    # We use a mariadb image which supports both amd64 & arm64 architecture
+    #image: mariadb:10.6.4-focal
+    # If you really want to use MySQL, uncomment the following line
+    image: mysql:8.0.19
+
+    # la contraseña no esta en texto, sino que se lee desde un archivo secreto
+    environment:
+      - MYSQL_DATABASE=example
+      - MYSQL_ROOT_PASSWORD_FILE=/run/secrets/db-password
+    restart: always
+
+    # docker comprobara si mysql respone, igual que lo de depends on antes
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "--silent"]
+      interval: 3s
+      retries: 5
+      start_period: 30s
+    secrets:
+      - db-password
+
+    # esto esta bien ya que si borras el contenedor, la db sigue ahi, ESTO ES PERSISTENCIA DE DATOS
+    volumes:
+      - db-data:/var/lib/mysql
+    
+    # MySQL NO puede hablar con frontend, Solo backend
+    networks:
+      - spring-mysql
+  frontend:
+    build:
+      context: frontend
+      
+      #construye hasta la fase development
+      target: development
+
+    volumes:
+      - ./frontend/src:/code/src
+      - /project/node_modules
+    
+    # Frontend no ve MySQL
+    networks:
+      - react-spring
+    
+    # Frontend arranca después del backend
+    depends_on:
+      - backend
+  
+  web-server:
+    build: 
+      context: webserver
+    
+    ports:
+      - "81:80"
+    
+    networks:
+      - react-spring
+    
+    depends_on:
+      - frontend
+
+# con esto definimos la persistencia
+volumes:
+  db-data: {}
+secrets:
+  db-password:
+    file: db/password.txt
+
+# Dos redes aisladas:
+# frontend  backend
+# backend  db
+networks:
+  react-spring: {}
+  spring-mysql: {}
